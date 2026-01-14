@@ -1,0 +1,35 @@
+[Unit]
+Description=Course Selection API FastAPI Application
+After=network.target
+
+[Service]
+Type=simple
+# 注意：部署腳本會自動將 User、Group 和 HOME_PATH 替換為當前部署用戶
+# 如果手動部署，請將 www-data 改為實際的部署用戶（如 ubuntu），並設置正確的 HOME_PATH
+User=www-data
+Group=www-data
+WorkingDirectory=HOME_PATH/backend_api
+Environment="PATH=HOME_PATH/.local/bin:/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=HOME_PATH/backend_api/.env
+
+# 使用 Poetry 運行應用
+# 使用絕對路徑確保 Poetry 和虛擬環境可用
+ExecStart=/bin/bash -c 'export PATH="HOME_PATH/.local/bin:/usr/local/bin:/usr/bin:/bin" && cd HOME_PATH/backend_api && source "$(HOME_PATH/.local/bin/poetry env info --path)/bin/activate" && uvicorn course_selection_api.main:app --host 127.0.0.1 --port 8000 --workers 4'
+ExecReload=/bin/kill -s HUP $MAINPID
+
+# 重啟策略
+Restart=always
+RestartSec=10
+
+# 日誌配置
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=course-selection-api
+
+# 安全設置
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+

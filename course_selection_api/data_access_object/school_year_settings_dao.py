@@ -328,7 +328,12 @@ class SchoolYearThemeSettingsDAO:
     async def copy_school_year_theme_settings(conn, source_academic_year: int, source_academic_term: int,
                                              target_academic_year: int, target_academic_term: int,
                                              created_by: Optional[str] = None) -> dict:
-        """複製學年期主題設定和子主題設定到目標學年期"""
+        """複製學年期主題設定和子主題設定到目標學年期
+        
+        會複製所有主題設定，並為每個主題的所有子主題創建設定記錄。
+        子主題的 enabled 狀態會從來源學年期取得，如果來源沒有設定則預設為 'N'。
+        如果目標學年期已有設定，會先刪除舊設定再複製。
+        """
         # 檢查來源學年期是否存在主題設定
         check_source_query = """
         SELECT COUNT(*) FROM academic_year_coures_themes_setting 
@@ -338,14 +343,37 @@ class SchoolYearThemeSettingsDAO:
         if not source_count or source_count == 0:
             raise ValueError(f"來源學年 {source_academic_year} 學期 {source_academic_term} 不存在主題設定")
         
-        # 檢查目標學年期是否已存在主題設定
+        # 檢查目標學年期是否已存在設定，如果有則先刪除
         check_target_query = """
         SELECT COUNT(*) FROM academic_year_coures_themes_setting 
         WHERE academic_year = $1 AND academic_term = $2
         """
         target_count = await Database.fetchval(conn, check_target_query, target_academic_year, target_academic_term)
+        
+        deleted_themes_count = 0
+        deleted_sub_themes_count = 0
+        
         if target_count and target_count > 0:
-            raise ValueError(f"目標學年 {target_academic_year} 學期 {target_academic_term} 已存在主題設定，無法複製")
+            # 先刪除目標學年期的子主題設定
+            delete_sub_themes_query = """
+            DELETE FROM academic_year_coures_sub_theme_settings 
+            WHERE academic_year = $1 AND academic_term = $2
+            """
+            # 先計算要刪除的數量
+            count_sub_themes_query = """
+            SELECT COUNT(*) FROM academic_year_coures_sub_theme_settings 
+            WHERE academic_year = $1 AND academic_term = $2
+            """
+            deleted_sub_themes_count = await Database.fetchval(conn, count_sub_themes_query, target_academic_year, target_academic_term) or 0
+            await Database.execute(conn, delete_sub_themes_query, target_academic_year, target_academic_term)
+            
+            # 再刪除目標學年期的主題設定
+            delete_themes_query = """
+            DELETE FROM academic_year_coures_themes_setting 
+            WHERE academic_year = $1 AND academic_term = $2
+            """
+            deleted_themes_count = target_count
+            await Database.execute(conn, delete_themes_query, target_academic_year, target_academic_term)
         
         # 查詢來源學年期的所有主題設定
         themes_query = """
@@ -355,19 +383,16 @@ class SchoolYearThemeSettingsDAO:
         """
         themes_results = await Database.fetch(conn, themes_query, source_academic_year, source_academic_term)
         
-        # 查詢來源學年期的所有子主題設定
-        sub_themes_query = """
-        SELECT systs.coures_sub_themes_id, systs.enabled
-        FROM academic_year_coures_sub_theme_settings systs
-        WHERE systs.academic_year = $1 AND systs.academic_term = $2
-        """
-        sub_themes_results = await Database.fetch(conn, sub_themes_query, source_academic_year, source_academic_term)
-        
-        # 批量插入主題設定到目標學年期
-        themes_count = 0
         current_time = datetime.now()
+        themes_count = 0
+        sub_themes_count = 0
+        
+        # 為每個主題複製設定，並複製其所有子主題設定
         for theme_row in themes_results:
             theme_dict = dict(theme_row)
+            coures_themes_id = theme_dict['coures_themes_id']
+            
+            # 插入主題設定
             fill_week_char = theme_dict['fill_in_week_enabled'] if isinstance(theme_dict.get('fill_in_week_enabled'), str) else ('Y' if theme_dict.get('fill_in_week_enabled') else 'N')
             select_most_relevant_char = theme_dict.get('select_most_relevant_sub_theme_enabled', 'N') if isinstance(theme_dict.get('select_most_relevant_sub_theme_enabled'), str) else ('Y' if theme_dict.get('select_most_relevant_sub_theme_enabled') else 'N')
             setting_id = str(uuid.uuid4())
@@ -378,29 +403,52 @@ class SchoolYearThemeSettingsDAO:
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             """
             await Database.execute(conn, insert_theme_query, setting_id, target_academic_year, target_academic_term,
-                                 theme_dict['coures_themes_id'], fill_week_char, theme_dict['scale_max'], select_most_relevant_char,
+                                 coures_themes_id, fill_week_char, theme_dict['scale_max'], select_most_relevant_char,
                                  created_by, created_by, current_time, current_time)
             themes_count += 1
-        
-        # 批量插入子主題設定到目標學年期
-        sub_themes_count = 0
-        for sub_theme_row in sub_themes_results:
-            sub_theme_dict = dict(sub_theme_row)
-            enabled_char = sub_theme_dict['enabled'] if isinstance(sub_theme_dict.get('enabled'), str) else ('Y' if sub_theme_dict.get('enabled') else 'N')
-            sub_setting_id = str(uuid.uuid4())
-            insert_sub_theme_query = """
-            INSERT INTO academic_year_coures_sub_theme_settings 
-            (id, academic_year, academic_term, coures_sub_themes_id, enabled, 
-             created_by, updated_by, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            
+            # 查詢該主題的所有子主題，並取得來源學年期的 enabled 狀態
+            sub_themes_query = """
+            SELECT 
+                st.id as sub_theme_id,
+                COALESCE(systs.enabled, 'N') as enabled
+            FROM coures_sub_themes st
+            LEFT JOIN academic_year_coures_sub_theme_settings systs 
+                ON st.id = systs.coures_sub_themes_id
+                AND systs.academic_year = $1 
+                AND systs.academic_term = $2
+            WHERE st.coures_themes_id = $3
             """
-            await Database.execute(conn, insert_sub_theme_query, sub_setting_id, target_academic_year, target_academic_term,
-                                  sub_theme_dict['coures_sub_themes_id'], enabled_char, created_by, created_by, current_time, current_time)
-            sub_themes_count += 1
+            sub_themes_results = await Database.fetch(conn, sub_themes_query, 
+                                                      source_academic_year, source_academic_term, coures_themes_id)
+            
+            # 為每個子主題創建設定記錄
+            for sub_theme_row in sub_themes_results:
+                sub_theme_dict = dict(sub_theme_row)
+                enabled_char = sub_theme_dict['enabled'] if isinstance(sub_theme_dict.get('enabled'), str) else ('Y' if sub_theme_dict.get('enabled') else 'N')
+                sub_setting_id = str(uuid.uuid4())
+                insert_sub_theme_query = """
+                INSERT INTO academic_year_coures_sub_theme_settings 
+                (id, academic_year, academic_term, coures_sub_themes_id, enabled, 
+                 created_by, updated_by, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                """
+                try:
+                    await Database.execute(conn, insert_sub_theme_query, sub_setting_id, target_academic_year, target_academic_term,
+                                          sub_theme_dict['sub_theme_id'], enabled_char, created_by, created_by, current_time, current_time)
+                    sub_themes_count += 1
+                except Exception as e:
+                    # 如果已存在（唯一約束錯誤），則跳過
+                    error_str = str(e).lower()
+                    if 'unique constraint' in error_str or 'duplicate' in error_str or 'ora-00001' in error_str:
+                        continue
+                    raise
         
         return {
             'themes_count': themes_count,
-            'sub_themes_count': sub_themes_count
+            'sub_themes_count': sub_themes_count,
+            'deleted_themes_count': deleted_themes_count,
+            'deleted_sub_themes_count': deleted_sub_themes_count
         }
 
 
@@ -540,21 +588,89 @@ class SchoolYearSubThemeSettingsDAO:
 
     @staticmethod
     async def update_school_year_sub_theme_setting(conn, setting_id: str, enabled: bool,
-                                                 updated_by: Optional[str] = None):
-        """更新學年期細項主題設定（通過 ID）"""
-        current_time = datetime.now()
+                                                 updated_by: Optional[str] = None,
+                                                 academic_year: Optional[int] = None,
+                                                 academic_term: Optional[int] = None):
+        """更新學年期細項主題設定（通過 ID）
         
-        update_query = """
-        UPDATE academic_year_coures_sub_theme_settings 
-        SET enabled = $1, updated_by = $2, updated_at = $3
-        WHERE id = $4
+        如果 setting_id 對應的記錄不存在，且提供了 academic_year 和 academic_term，
+        則會嘗試將 setting_id 視為 sub_theme_id 並自動創建或更新記錄。
         """
+        current_time = datetime.now()
         enabled_char = 'Y' if enabled else 'N'
-        await Database.execute(conn, update_query, enabled_char, updated_by, current_time, setting_id)
         
-        # 查詢並返回結果
-        result = await SchoolYearSubThemeSettingsDAO.get_school_year_sub_theme_setting_by_id(conn, setting_id)
-        return result
+        # 先檢查記錄是否存在（通過 setting_id）
+        existing = await SchoolYearSubThemeSettingsDAO.get_school_year_sub_theme_setting_by_id(conn, setting_id)
+        
+        if existing:
+            # 記錄存在，執行更新
+            update_query = """
+            UPDATE academic_year_coures_sub_theme_settings 
+            SET enabled = $1, updated_by = $2, updated_at = $3
+            WHERE id = $4
+            """
+            await Database.execute(conn, update_query, enabled_char, updated_by, current_time, setting_id)
+            
+            # 查詢並返回結果
+            result = await SchoolYearSubThemeSettingsDAO.get_school_year_sub_theme_setting_by_id(conn, setting_id)
+            return result
+        else:
+            # 記錄不存在，嘗試自動創建或更新
+            if academic_year is None or academic_term is None:
+                # 沒有提供學年期資訊，無法創建
+                return None
+            
+            # 將 setting_id 視為 sub_theme_id，查詢對應的 sub_theme
+            sub_theme_query = """
+            SELECT st.id, st.sub_theme_code, t.theme_code
+            FROM coures_sub_themes st
+            JOIN coures_themes t ON st.coures_themes_id = t.id
+            WHERE st.id = $1
+            """
+            sub_theme = await Database.fetchrow(conn, sub_theme_query, setting_id)
+            
+            if not sub_theme:
+                # 找不到對應的 sub_theme，無法創建
+                return None
+            
+            # 先檢查該學年期 + sub_theme 的組合是否已經存在
+            existing_by_sub_theme_query = """
+            SELECT id FROM academic_year_coures_sub_theme_settings
+            WHERE academic_year = $1 AND academic_term = $2 AND coures_sub_themes_id = $3
+            """
+            existing_setting = await Database.fetchrow(conn, existing_by_sub_theme_query, 
+                                                       academic_year, academic_term, setting_id)
+            
+            if existing_setting:
+                # 該學年期的設定已存在，執行更新
+                update_query = """
+                UPDATE academic_year_coures_sub_theme_settings 
+                SET enabled = $1, updated_by = $2, updated_at = $3
+                WHERE id = $4
+                """
+                await Database.execute(conn, update_query, enabled_char, updated_by, 
+                                       current_time, existing_setting['id'])
+                
+                # 查詢並返回結果
+                result = await SchoolYearSubThemeSettingsDAO.get_school_year_sub_theme_setting_by_id(
+                    conn, existing_setting['id'])
+                return result
+            else:
+                # 創建新記錄
+                new_setting_id = str(uuid.uuid4())
+                insert_query = """
+                INSERT INTO academic_year_coures_sub_theme_settings 
+                (id, academic_year, academic_term, coures_sub_themes_id, enabled, 
+                 created_by, updated_by, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                """
+                await Database.execute(conn, insert_query, new_setting_id, academic_year, academic_term,
+                                     setting_id, enabled_char, updated_by, updated_by, current_time, current_time)
+                
+                # 查詢並返回結果
+                result = await SchoolYearSubThemeSettingsDAO.get_school_year_sub_theme_setting_by_id(
+                    conn, new_setting_id)
+                return result
 
     @staticmethod
     async def update_school_year_sub_theme_setting_by_code(conn, academic_year: int, academic_term: int, theme_code: str,

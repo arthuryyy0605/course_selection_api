@@ -309,6 +309,8 @@ class SchoolYearThemeSettingsCopyResponse(BaseModel):
     message: str = Field(..., description="操作結果訊息")
     themes_count: int = Field(..., description="複製的主題數量")
     sub_themes_count: int = Field(..., description="複製的子主題數量")
+    deleted_themes_count: int = Field(0, description="刪除的舊主題設定數量")
+    deleted_sub_themes_count: int = Field(0, description="刪除的舊子主題設定數量")
 
 
 # CSV 匯出篩選相關 Schema

@@ -283,13 +283,22 @@ class SchoolYearSubThemeSettingsBusiness:
             conn,
             setting_id,
             data['enabled'],
-            updated_by=data['user_id']
+            updated_by=data['user_id'],
+            academic_year=data.get('academic_year'),
+            academic_term=data.get('academic_term')
         )
         if not result:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"找不到設定ID '{setting_id}'"
-            )
+            # 提供更詳細的錯誤訊息
+            if data.get('academic_year') and data.get('academic_term'):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"找不到設定ID '{setting_id}'，且該 ID 也不是有效的 sub_theme_id，無法自動創建記錄"
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"找不到設定ID '{setting_id}'。如需自動創建記錄，請提供 academic_year 和 academic_term 參數"
+                )
         return format_datetime_fields(dict(result))
 
     @staticmethod
@@ -389,10 +398,18 @@ class SchoolYearThemeSettingsCopyBusiness:
                 data['target_academic_term'],
                 created_by=data['user_id']
             )
+            
+            # 組合回應訊息
+            deleted_info = ""
+            if result.get('deleted_themes_count', 0) > 0 or result.get('deleted_sub_themes_count', 0) > 0:
+                deleted_info = f"（已刪除舊設定：{result.get('deleted_themes_count', 0)} 個主題、{result.get('deleted_sub_themes_count', 0)} 個子主題）"
+            
             return {
-                "message": f"成功從學年 {data['source_academic_year']} 學期 {data['source_academic_term']} 複製到學年 {data['target_academic_year']} 學期 {data['target_academic_term']}",
+                "message": f"成功從學年 {data['source_academic_year']} 學期 {data['source_academic_term']} 複製到學年 {data['target_academic_year']} 學期 {data['target_academic_term']}{deleted_info}",
                 "themes_count": result['themes_count'],
-                "sub_themes_count": result['sub_themes_count']
+                "sub_themes_count": result['sub_themes_count'],
+                "deleted_themes_count": result.get('deleted_themes_count', 0),
+                "deleted_sub_themes_count": result.get('deleted_sub_themes_count', 0)
             }
         except ValueError as e:
             raise HTTPException(

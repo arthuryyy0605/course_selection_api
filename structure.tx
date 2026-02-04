@@ -1,0 +1,61 @@
+.
+├── API_EXPORT_CSV_CHANGES.md
+├── API_STATUS_REPORT.md
+├── API_TOKEN_REQUIREMENTS.md
+├── CHECK_LOGS_GUIDE.md
+├── README.md
+├── TOKEN_AUTH_GUIDE.md
+├── VERIFY_API_FIX.md
+├── check_api_logs.sh
+├── course_selection_api
+│   ├── __init__.py
+│   ├── business_model
+│   │   ├── __init__.py
+│   │   ├── auth_business.py
+│   │   ├── school_year_business.py
+│   │   ├── school_year_settings_business.py
+│   │   └── theme_business.py
+│   ├── config.py
+│   ├── data_access_object
+│   │   ├── __init__.py
+│   │   ├── db.py
+│   │   ├── school_year_settings_dao.py
+│   │   ├── theme_dao.py
+│   │   └── users_dao.py
+│   ├── endpoints
+│   │   ├── __init__.py
+│   │   ├── auth.py
+│   │   ├── school_year.py
+│   │   ├── school_year_settings.py
+│   │   ├── theme.py
+│   │   └── token_auth.py
+│   ├── main.py
+│   ├── schema
+│   │   ├── __init__.py
+│   │   ├── auth.py
+│   │   ├── school_year_settings.py
+│   │   └── theme.py
+│   └── utils
+│       ├── __init__.py
+│       ├── email_generator.py
+│       └── privacy_protection.py
+├── deploy
+│   ├── README.md
+│   ├── deploy.sh
+│   ├── env.template
+│   ├── fastapi.service
+│   ├── nginx.conf
+│   ├── nginx.conf.http
+│   ├── setup_https.sh
+│   ├── setup_server.sh
+│   └── setup_service.sh
+├── import_course_data_from_csv.py
+├── import_course_data_from_excel.py
+├── import_sdgs_sub_themes.py
+├── import_themes_from_csv.py
+├── oracle_create_tables_users_tablespace.sql
+├── poetry.lock
+├── pyproject.toml
+└── structure.tx
+
+7 directories, 51 files

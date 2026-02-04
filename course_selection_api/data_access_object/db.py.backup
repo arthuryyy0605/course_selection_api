@@ -7,39 +7,6 @@ from typing import Any, List, Optional
 from course_selection_api.config import get_settings
 setting = get_settings()
 
-# 全局連接池
-_pool = None
-
-
-def get_connection_pool():
-    """獲取或創建連接池（單例模式）"""
-    global _pool
-    if _pool is None:
-        dsn = get_database_dsn()
-        try:
-            _pool = oracledb.create_pool(
-                user=setting.db_user,
-                password=setting.db_password,
-                dsn=dsn,
-                min=5,                          # 最小連接數（增加以應對並發）
-                max=20,                         # 最大連接數（增加以支持批量操作）
-                increment=2,                    # 連接增量（加快擴展速度）
-                getmode=oracledb.POOL_GETMODE_WAIT,
-                wait_timeout=60000,             # 等待超時 60 秒（增加超時時間）
-                timeout=600,                    # 連接空閒超時 10 分鐘
-                ping_interval=60                # 每 60 秒 ping 一次保持連接
-            )
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.info(f"Database connection pool created successfully (min=2, max=10)")
-        except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.error(f"Failed to create connection pool: {e}")
-            raise
-    return _pool
-
-
 class Database:
     """Database utility class for executing queries (Oracle)"""
     
@@ -159,27 +126,30 @@ def get_database_dsn() -> str:
 
 
 async def get_db_connection():
-    """FastAPI dependency to get database connection from pool"""
-    pool = get_connection_pool()
+    """FastAPI dependency to get database connection"""
+    dsn = get_database_dsn()
+    username = setting.db_user
+    password = setting.db_password
+    
+    # 使用線程池執行同步連接
     conn = None
     try:
-        # 從連接池獲取連接（使用線程池執行同步操作）
-        conn = await asyncio.to_thread(pool.acquire)
+        conn = await asyncio.to_thread(oracledb.connect, user=username, password=password, dsn=dsn)
         yield conn
     except Exception as e:
         # 記錄連接錯誤
         import logging
         logger = logging.getLogger(__name__)
         logger.error(f"Database connection error: {e}")
-        logger.error(f"DSN: {get_database_dsn()}, User: {setting.db_user}")
+        logger.error(f"DSN: {dsn}, User: {username}")
         raise
     finally:
-        # 釋放連接回連接池（不是關閉連接）
+        # 確保連接正確關閉
         if conn:
             try:
-                await asyncio.to_thread(pool.release, conn)
+                await asyncio.to_thread(conn.close)
             except Exception as e:
-                # 記錄釋放錯誤但不拋出異常
+                # 記錄關閉錯誤但不拋出異常
                 import logging
                 logger = logging.getLogger(__name__)
-                logger.warning(f"Error releasing database connection: {e}")
+                logger.warning(f"Error closing database connection: {e}")

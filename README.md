@@ -1,6 +1,14 @@
 # 課程選擇系統 API
 
 基於 FastAPI 框架開發的課程主題維護與管理系統。
+ssh hostadm@140.120.3.145
+hy12345
+# 資料庫設定（Oracle）
+db_host=140.120.3.90
+db_port=1521
+db_user=schoolsdgs
+db_password=Sdgs2025
+db_name=nchu
 
 ## 專案結構
 
